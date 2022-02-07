@@ -11,7 +11,7 @@ import zipfile
 import os
 from bw2data.utils import download_file
 import seaborn as sns
-
+from st_aggrid import AgGrid
 
 def submit_form():  #need to add prevent duplicate
     with st.form(key='my_form'):
@@ -61,46 +61,52 @@ def delete_button():
 
 def LCA_tool():
     
-    database = st.selectbox('Select your database',['forwast','biosphere3','ecoinvent'])
-    selected = Database(database).search("*", limit=None)
-    options = st.multiselect(
-    'Search for an Activity',
-    selected)
+    database = st.selectbox('Select your database',['forwast','biosphere3','ecoinvent 3.5_cutoff_ecoSpold02'])
+    DB = bw.Database(database)
+    DB.make_searchable()
     
-    myMethods = [method for method in bw.methods
-             if "ReCiPe" in method[0] 
-             and "(H,A)" in method[0] 
-             and "w/o" not in method[0] 
-             and "total" not in method[1]
-             and "total" in method[2]]
-    results = []
+    input = st.text_input('Search for market')
+    selected = bw.Database(database).search(input, limit=None)
+    if input is not '':
+        options = st.multiselect(
+        'Search for an Activity',
+        selected)
     
-    if options:
-        for milk in options:
-            lca = bw.LCA({milk:1})
-            lca.lci()
-            for method in myMethods:
-                lca.switch_method(method)
-                lca.lcia()
-                results.append((milk["name"], method[1].title(), lca.score))
+    
+        myMethods = [method for method in bw.methods
+                if "ReCiPe" in method[0] 
+                and "(H,A)" in method[0] 
+                and "w/o" not in method[0] 
+                and "total" not in method[1]
+                and "total" in method[2]]
+        results = []
         
-        results_df = pd.DataFrame(results, columns=["Name", "Method", "Score"])
-        results_df_pivot = pd.pivot_table(results_df, index = "Name", columns = "Method", values = "Score")
-        st.write(results_df_pivot)
+        if options:
+            for milk in options:
+                lca = bw.LCA({milk:1})
+                lca.lci()
+                for method in myMethods:
+                    lca.switch_method(method)
+                    lca.lcia()
+                    results.append((milk["name"], method[1].title(), lca.score))
+            
+            results_df = pd.DataFrame(results, columns=["Name", "Method", "Score"])
+            results_df_pivot = pd.pivot_table(results_df, index = "Name", columns = "Method", values = "Score")
+            st.write(results_df_pivot)
 
-        g = sns.catplot(
-            data = results_df,
-            kind='bar',
-            x = 'Method',y='Score',hue='Name'
-        )
-        
-        st.pyplot(g)
+            g = sns.catplot(
+                data = results_df,
+                kind='bar',
+                x = 'Method',y='Score',hue='Name'
+            )
+            
+            st.pyplot(g)
 
 
 
 
 
-pages = ["Create a Project", "TEST View a Project", "Delete a Project"]
+pages = ["Create a Project", "View a Project", "Delete a Project"]
 
 bw.projects.set_current("StepByStep")
 bw.bw2setup()
@@ -110,21 +116,19 @@ if "forwast" not in bw.databases:
     zipfile.ZipFile(filepath).extractall(dirpath)
     bw.BW2Package.import_file(os.path.join(dirpath, "forwast.bw2package"))
 
-if 'ecoinvent' in bw.databases:
+if 'ecoinvent 3.5_cutoff_ecoSpold02' in bw.databases:
     print("Database has already been imported.")
 else:
     # mind that the ecoinvent file must be unzipped; then: path to the datasets subfolder
-    fpei35cut = r"C:\Users\weiji\Desktop\mycode\ecoinvent"
+    fpei35cut = r"C:/Users/weiji/Desktop/mycode/ecoinvent/datasets"
     # the "r" makes sure that the path is read as a string - especially useful when you have spaces in your string
-    ei35cut = bw.SingleOutputEcospold2Importer(fpei35cut, 'ecoinvent')
+    ei35cut = bw.SingleOutputEcospold2Importer(fpei35cut, 'ecoinvent 3.5_cutoff_ecoSpold02')
     ei35cut
     ei35cut.apply_strategies()
     ei35cut.statistics()
-bioDB = bw.Database("biosphere3")
-forwastDB = bw.Database("forwast")
-eiDB = bw.Database('ecoinvent')
-forwastDB.make_searchable()
-eiDB.make_searchable()
+    ei35cut.write_database()
+
+
 option = st.sidebar.selectbox(
     '',
     (pages)
@@ -137,7 +141,8 @@ if option == pages[1]:
     st.header(option)
     choose_file()
     df = pd.read_excel('tempDir/' + choose_file.var )
-    st.write(df)
+    grid_return = AgGrid(df, editable=True)
+    new_df = grid_return['data']
     LCA_tool()
 if option == pages[2]:
     st.header(option)
