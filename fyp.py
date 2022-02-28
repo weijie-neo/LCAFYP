@@ -1,3 +1,4 @@
+from random import choices
 import streamlit as st
 import os
 import matplotlib.pyplot as plt
@@ -11,7 +12,7 @@ import zipfile
 import os
 from bw2data.utils import download_file
 import seaborn as sns
-from st_aggrid import AgGrid
+
 
 def submit_form():  #need to add prevent duplicate
     with st.form(key='my_form'):
@@ -36,11 +37,26 @@ def save_uploadedfile(uploadedfile,uploaded_file_name):
 
 def choose_file():
     list = os.listdir(os.getcwd() + '/tempDir')
-    choose_file.var = st.selectbox(
+    choose_file = st.selectbox(
      'Project',
      (list))
+    global filename
+    filename.append(choose_file)
 
-def delete_button():
+
+def choose_multiple_files():
+    list = os.listdir(os.getcwd() + '/tempDir')
+    choose_file = st.multiselect(
+     'Project',
+     (list))
+    global filename
+    for i in choose_file:
+        filename.append(i)
+    
+    
+    
+    
+def delete_button(filename):
     m = st.markdown("""
     <style>
     div.stButton > 
@@ -52,14 +68,114 @@ def delete_button():
     </style>""", unsafe_allow_html=True)
 
     if st.button('Delete'):
-        os.remove('tempDir/' + choose_file.var)
+        os.remove('tempDir/' + filename)
         time.sleep(1)
         st.write('File Deleted, please refresh to view changes')
 
 
+def mapper(filename,multiselect):
+    datasets = pd.DataFrame() 
+    for f in filename:
+        
+        data = pd.read_excel(os.getcwd() + '/tempDir/' + f)
+        data['type'] = f
+        datasets = datasets.append(data)
+    
+    ei_db_df = datasets.loc[datasets['Database name'] == 'ecoinvent 3.5_cutoff_ecoSpold02']
+    
+    DB = bw.Database('ecoinvent 3.5_cutoff_ecoSpold02')
+    DB.make_searchable()
+    myMethods = multiselect
+    results = []
+
+    ei_db_df = ei_db_df[['Quantity','Market name','Phase','type']]
+
+    for i in ei_db_df.values:
+        
+        lci = bw.Database('ecoinvent 3.5_cutoff_ecoSpold02').search(str(i[1]))
+        lci = lci[0]
+        lca = bw.LCA({lci:1})
+        lca.lci() 
+        for method in myMethods:         
+            lca.switch_method(method)
+            lca.lcia()
+            results.append((lci["name"], method[1].title(),lca.score,i[0], lca.score * i[0], i[2],i[3]))
+    
+    
+    lca_df = pd.DataFrame(results, columns=["Name", "Method", "Score/Unit","Quantity","Score","Phase","type"])
+    global raw_results_df 
+    raw_results_df = lca_df
+    sns.set(rc={'figure.figsize':(50,20)})
+    
+def methodchoice():
+    options = st.multiselect(
+     'Methods',
+     (bw.methods))
+    global multiselect
+    for i in options:
+        multiselect.append(i)
     
 
-def LCA_tool():
+def single_viz(raw_results_df):
+    results_df = pd.pivot_table(raw_results_df, columns = "Method", values = "Score", aggfunc=np.sum)
+    results_2_df = pd.pivot_table(raw_results_df, index = "Phase", columns = "Method", values = "Score", aggfunc=np.sum)
+    st.title('Result')
+    st.header('Grouped by Method')
+    
+    g = sns.catplot(
+                data = raw_results_df,
+                kind='bar',
+                x = 'Method' ,y='Score', 
+                ci=None , estimator=sum
+                )      
+         
+    st.pyplot(g)
+    st.write(results_df)
+    st.header('Grouped by Phase')
+    
+    g = sns.catplot(
+                data = raw_results_df,
+                kind='bar',
+                x = 'Phase' ,y='Score', hue='Method',
+                ci=None , estimator=sum
+                )      
+         
+    st.pyplot(g)
+    st.write(results_2_df)
+
+def compare_viz(raw_results_df):
+    
+    results_df = pd.pivot_table(raw_results_df,index = "type",columns = "Method", values = "Score", aggfunc=np.sum)
+    st.title('Result')
+    st.header('Grouped by Type')
+    g = sns.catplot(
+                data = raw_results_df,
+                kind='bar',
+                x = 'type' ,y='Score', hue='Method',
+                ci=None , estimator=sum
+                )      
+         
+    st.pyplot(g)
+    st.write(results_df)
+
+    results_df = pd.pivot_table(raw_results_df,index = "type",columns = "Method", values = "Score", aggfunc=np.sum)
+    
+    st.header('Grouped by Method')
+    g = sns.catplot(
+                data = raw_results_df,
+                kind='bar',
+                x = 'Method' ,y='Score', hue='type',
+                ci=None , estimator=sum
+                )      
+         
+    st.pyplot(g)
+    st.write(results_df)
+
+
+
+
+
+def LCA_tool(multiselect):
     
     database = st.selectbox('Select your database',['forwast','biosphere3','ecoinvent 3.5_cutoff_ecoSpold02'])
     DB = bw.Database(database)
@@ -73,12 +189,7 @@ def LCA_tool():
         selected)
     
     
-        myMethods = [method for method in bw.methods
-                if "ReCiPe" in method[0] 
-                and "(H,A)" in method[0] 
-                and "w/o" not in method[0] 
-                and "total" not in method[1]
-                and "total" in method[2]]
+        myMethods = multiselect
         results = []
         
         if options:
@@ -97,7 +208,7 @@ def LCA_tool():
             g = sns.catplot(
                 data = results_df,
                 kind='bar',
-                x = 'Method',y='Score',hue='Name'
+                x = 'Method',y='Score',hue='Name',ci=None
             )
             
             st.pyplot(g)
@@ -106,7 +217,7 @@ def LCA_tool():
 
 
 
-pages = ["Create a Project", "View a Project", "Delete a Project"]
+pages = ["Create a Project","Search database", "View a Project", "Compare Projects", "Delete a Project"]
 
 bw.projects.set_current("StepByStep")
 bw.bw2setup()
@@ -134,19 +245,51 @@ option = st.sidebar.selectbox(
     (pages)
 )
 
-if option == pages[0]:
+if option == "Create a Project":
     st.header(option)
     submit_form()
-if option == pages[1]:
+if option ==  "View a Project":
     st.header(option)
-    choose_file()
-    df = pd.read_excel('tempDir/' + choose_file.var )
-    grid_return = AgGrid(df, editable=True)
-    new_df = grid_return['data']
-    LCA_tool()
-if option == pages[2]:
-    st.header(option)
-    choose_file()   
-    delete_button() 
+    filename = []
+    multiselect = []
     
+    choose_file()
+    
+    for i in filename:
+        data = pd.read_excel(os.getcwd() + '/tempDir/' + i)
+        st.write(data)
+    raw_results_df = pd.DataFrame() 
+    methodchoice()
+    
+    if st.button('Run'):
+        mapper(filename,multiselect)
+        single_viz(raw_results_df)
+       
 
+
+
+
+if option == "Delete a Project":
+    st.header(option)
+    filename = [] 
+    choose_multiple_files()
+      
+    delete_button(filename) 
+
+if option == "Search database":
+    st.header(option)
+    multiselect = []
+    methodchoice()
+    LCA_tool(multiselect)
+
+if option == "Compare Projects":
+    st.header(option)
+    filename = []
+    multiselect = []
+    choose_multiple_files()
+    raw_results_df = pd.DataFrame() 
+    methodchoice()
+    if st.button('Run'):
+        mapper(filename,multiselect)
+        compare_viz(raw_results_df)
+        
